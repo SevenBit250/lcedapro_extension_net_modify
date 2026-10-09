@@ -1,8 +1,6 @@
 # 原理图网络工具箱（sch-net-tools）
 
-[![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
-[![Platform](https://img.shields.io/badge/%E5%98%89%E7%AB%8B%E5%88%9BEDA-%E4%B8%93%E4%B8%9A%E7%89%88-blueviolet)](https://pro.lceda.cn/)
-[![Release](https://img.shields.io/badge/Release-v1.0.0-green)](https://github.com/SevenBit250/lcedapro_extension_net_modify/releases)
+License: Apache-2.0 ｜ 适用于嘉立创EDA专业版 V3.2+ ｜ 当前版本 v1.0.0
 
 立创EDA专业版扩展：**原理图网络标签批量改名工具**。单个面板内完成查找预览与批量替换，支持正则表达式与捕获组，覆盖电源/地标志、网络端口（跨图页）与导线网络名。全部改名逻辑已在真实编辑器（V3.2.186）端到端验证。
 
