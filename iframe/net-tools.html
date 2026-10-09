@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+	<title>批量修改网络标签</title>
+	<meta charset="utf-8" />
+	<style>
+		* { margin: 0; padding: 0; box-sizing: border-box; }
+		html, body { height: 100%; }
+		body {
+			font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+			font-size: 12px; color: #2b2f36; background: var(--bg-color-pop-up-content, #fff);
+			padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; user-select: none;
+		}
+		input, select {
+			font-size: 12px; padding: 4px 6px; border: 1px solid #c9cdd4; border-radius: 3px;
+			background: #fff; color: #2b2f36; outline: none;
+		}
+		input:focus, select:focus { border-color: #4b8ff5; }
+		button {
+			font-size: 12px; padding: 5px 18px; border: 1px solid #c9cdd4; border-radius: 3px;
+			background: #f5f6f7; color: #2b2f36; cursor: pointer;
+		}
+		button:hover { background: #eceef0; }
+		button.primary { background: #4b8ff5; border-color: #4b8ff5; color: #fff; }
+		button.primary:hover { background: #3d80e8; }
+		button:disabled { opacity: 0.5; cursor: default; }
+		.row { display: flex; align-items: center; gap: 8px; }
+		.row label.field { width: 56px; flex: none; color: #5a6068; }
+		.row input[type=text] { flex: 1; }
+		.opts { display: flex; align-items: center; gap: 14px; padding-left: 64px; }
+		.opts label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+		.actions { display: flex; align-items: center; gap: 10px; padding-left: 64px; }
+		#status { flex: 1; color: #5a6068; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		#status.err { color: #d54941; }
+		#banner {
+			display: none; padding: 8px 10px; border-radius: 4px; background: #fdecec;
+			color: #d54941; line-height: 1.5;
+		}
+		#list {
+			flex: 1; min-height: 120px; overflow: auto; border: 1px solid #e2e4e8; border-radius: 4px;
+			padding: 6px 8px; line-height: 1.7; user-select: text;
+			font-family: Consolas, "Courier New", monospace; font-size: 12px; background: #fafbfc;
+		}
+		#list .ok { color: #1f8a3b; }
+		#list .fail { color: #d54941; }
+		#list .dim { color: #98a0a8; }
+		.hint { color: #98a0a8; line-height: 1.5; }
+	</style>
+</head>
+<body>
+	<div id="banner"></div>
+	<div class="row">
+		<label class="field">查找内容</label>
+		<input type="text" id="find" placeholder="要被替换的网络名片段" />
+	</div>
+	<div class="row">
+		<label class="field">替换为</label>
+		<input type="text" id="replace" placeholder="留空表示删除该片段" />
+	</div>
+	<div class="opts">
+		<label><input type="checkbox" id="useRegex" /> 使用正则表达式</label>
+		<label><input type="checkbox" id="caseSensitive" /> 区分大小写</label>
+	</div>
+	<div class="actions">
+		<button id="btnFind" class="primary">查找</button>
+		<button id="btnReplace" class="primary">替换</button>
+		<span id="status">正在连接编辑器…</span>
+	</div>
+	<div id="list"><span class="dim">点击「查找」列出全部匹配的网络名；确认无误后点击「替换」执行修改。</span></div>
+	<div class="hint">支持：电源/地标志、网络端口（跨图页）、导线网络名（当前图页）。勾选「使用正则表达式」后按正则匹配，替换文本可用 $1、$2… 引用捕获组。改名不会自动保存工程，请检查画布后手动保存（Ctrl+S）。</div>
+
+	<script>
+		'use strict';
+		const $ = (id) => document.getElementById(id);
+		const statusEl = $('status'), listEl = $('list'), bannerEl = $('banner');
+		const btnFind = $('btnFind'), btnReplace = $('btnReplace');
+		const KIND = { netflag: '电源地', netport: '端口', wire: '导线', netlabel: '标签' };
+		const NAME_ATTR_KEY = 'NAME';
+		const GLOBAL_NET_ATTR_KEY = 'GLOBAL NET NAME';
+
+		function setStatus(text, isErr) {
+			statusEl.textContent = text;
+			statusEl.className = isErr ? 'err' : '';
+		}
+		function esc(s) {
+			return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+		}
+
+		/* ================= 编辑器 API 层（经主窗口 _EXTAPI_ROOT_，由 API Gateway 扩展注入） ================= */
+		let ROOT = null;
+		try { ROOT = parent._EXTAPI_ROOT_ || null; } catch (e) { ROOT = null; }
+		if (!ROOT || !ROOT.sch_PrimitiveAttribute) {
+			bannerEl.style.display = 'block';
+			bannerEl.textContent = '无法连接编辑器 API（主窗口未找到 _EXTAPI_ROOT_，需启用 EasyEDA API Gateway 扩展）。'
+				+ '关闭本窗口后仍可使用菜单中的对话框模式。';
+			setStatus('API 不可用', true);
+			btnFind.disabled = btnReplace.disabled = true;
+		}
+
+		async function safeArr(p) {
+			try { const r = await p; return Array.isArray(r) ? r : []; } catch (e) { return []; }
+		}
+
+		async function collect() {
+			const items = [];
+			const keyCount = new Map();
+			// 1) 自由属性图元（v4 网络标签，当前图页）
+			for (const attr of await safeArr(ROOT.sch_PrimitiveAttribute.getAll())) {
+				const key = String(attr.getState_Key() ?? '');
+				const value = String(attr.getState_Value() ?? '');
+				if (key.toUpperCase() === 'NET') {
+					if (value) items.push({ kind: 'netlabel', primitiveId: attr.getState_PrimitiveId(), name: value });
+				}
+				else if (key) keyCount.set(key, (keyCount.get(key) || 0) + 1);
+			}
+			// 2) 电源/地标志与网络端口（元件图元，跨图页；网络名在其「Name」子属性）
+			for (const [type, kind] of [['netflag', 'netflag'], ['netport', 'netport']]) {
+				for (const comp of await safeArr(ROOT.sch_PrimitiveComponent.getAll(type, true))) {
+					let name = '';
+					try { name = comp.getState_Net() ?? comp.getState_Name() ?? ''; } catch (e) { continue; }
+					if (!name) continue;
+					const pid = comp.getState_PrimitiveId();
+					let attrId, syncAttrIds;
+					for (const kid of await safeArr(ROOT.sch_PrimitiveAttribute.getAll(pid))) {
+						const kk = String(kid.getState_Key() ?? '').toUpperCase();
+						if (!attrId && kk === NAME_ATTR_KEY) attrId = kid.getState_PrimitiveId();
+						else if (kk === GLOBAL_NET_ATTR_KEY) (syncAttrIds = syncAttrIds || []).push(kid.getState_PrimitiveId());
+					}
+					items.push({ kind, primitiveId: pid, attrId, syncAttrIds, name });
+				}
+			}
+			// 3) 导线网络名（当前图页）
+			for (const w of await safeArr(ROOT.sch_PrimitiveWire.getAll())) {
+				let net = '';
+				try { net = String(w.getState_Net() ?? ''); } catch (e) { continue; }
+				if (net) items.push({ kind: 'wire', primitiveId: w.getState_PrimitiveId(), name: net });
+			}
+			const ignoredKeyStats = [...keyCount.entries()]
+				.map(([key, count]) => ({ key, count }))
+				.sort((a, b) => b.count - a.count);
+			return { items, ignoredKeyStats };
+		}
+
+		function escapeRegExp(s) {
+			return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		}
+		function computeNewName(name, opts) {
+			let to;
+			if (opts.mode === 'regex') {
+				to = name.replace(new RegExp(opts.find, opts.caseSensitive ? 'g' : 'gi'), opts.replace);
+			}
+			else {
+				const literalReplace = opts.replace.split('$').join('$$');
+				if (opts.caseSensitive) to = name.split(opts.find).join(opts.replace);
+				else to = name.replace(new RegExp(escapeRegExp(opts.find), 'gi'), literalReplace);
+			}
+			return to === name ? null : to;
+		}
+		function buildPlan(items, opts) {
+			const plan = [];
+			let skippedEmpty = 0;
+			for (const item of items) {
+				const to = computeNewName(item.name, opts);
+				if (to === null) continue;
+				if (!to.trim()) { skippedEmpty++; continue; }
+				plan.push({ kind: item.kind, primitiveId: item.primitiveId, attrId: item.attrId, syncAttrIds: item.syncAttrIds, from: item.name, to });
+			}
+			return { plan, skippedEmpty };
+		}
+		async function applyPlan(plan) {
+			const outcome = { okCount: 0, failCount: 0, failures: [] };
+			for (const p of plan) {
+				try {
+					let ok;
+					if (p.kind === 'netlabel') ok = !!(await ROOT.sch_PrimitiveAttribute.modify(p.primitiveId, { value: p.to }));
+					else if (p.kind === 'wire') ok = !!(await ROOT.sch_PrimitiveWire.modify(p.primitiveId, { net: p.to }));
+					else {
+						if (!p.attrId) throw new Error('未找到网络名子属性（Name）');
+						ok = !!(await ROOT.sch_PrimitiveAttribute.modify(p.attrId, { value: p.to }));
+						for (const sid of p.syncAttrIds || []) {
+							await ROOT.sch_PrimitiveAttribute.modify(sid, { value: p.to }).catch(() => undefined);
+						}
+					}
+					if (ok) outcome.okCount++;
+					else { outcome.failCount++; outcome.failures.push({ ...p, reason: 'modify 返回失败' }); }
+				}
+				catch (e) {
+					outcome.failCount++;
+					outcome.failures.push({ ...p, reason: e && e.message ? e.message : String(e) });
+				}
+			}
+			return outcome;
+		}
+
+		/* ================= UI 交互 ================= */
+		function readOpts() {
+			const find = $('find').value;
+			const opts = {
+				find,
+				replace: $('replace').value,
+				mode: $('useRegex').checked ? 'regex' : 'plain',
+				caseSensitive: $('caseSensitive').checked,
+			};
+			if (!find) { setStatus('请先输入查找内容', true); return null; }
+			if (opts.mode === 'regex') {
+				try { void new RegExp(find); }
+				catch (e) { setStatus('正则表达式语法错误：' + e.message, true); return null; }
+			}
+			return opts;
+		}
+
+		async function busy(fn) {
+			btnFind.disabled = btnReplace.disabled = true;
+			try { await fn(); }
+			catch (e) { setStatus('执行失败：' + (e && e.message ? e.message : e), true); }
+			btnFind.disabled = btnReplace.disabled = false;
+		}
+
+		async function freshPlan() {
+			const opts = readOpts();
+			if (!opts) return null;
+			setStatus('正在扫描…');
+			const { items, ignoredKeyStats } = await collect();
+			const plan = buildPlan(items, opts);
+			return { opts, items, plan, ignoredKeyStats };
+		}
+
+		function renderAgg(plan) {
+			const agg = new Map();
+			for (const p of plan) {
+				const k = p.kind + '\t' + p.from + '\t' + p.to;
+				agg.set(k, (agg.get(k) || 0) + 1);
+			}
+			return [...agg.entries()].map(([k, n]) => {
+				const [kind, from, to] = k.split('\t');
+				const cnt = n > 1 ? ' <span class="dim">×' + n + '</span>' : '';
+				return '<div>[' + esc(KIND[kind] || kind) + '] ' + esc(from) + ' → <b>' + esc(to) + '</b>' + cnt + '</div>';
+			}).join('');
+		}
+
+		/* ---- 查找：列出全部匹配（不修改） ---- */
+		btnFind.addEventListener('click', () => busy(async () => {
+			const r = await freshPlan();
+			if (!r) return;
+			if (!r.plan.plan.length) {
+				listEl.innerHTML = '<span class="dim">没有匹配「' + esc(r.opts.find) + '」的网络名（共扫描 ' + r.items.length + ' 个图元）。</span>';
+				setStatus('0 个匹配');
+				return;
+			}
+			listEl.innerHTML = renderAgg(r.plan.plan);
+			const emptyNote = r.plan.skippedEmpty ? '；' + r.plan.skippedEmpty + ' 条替换后为空名将跳过' : '';
+			setStatus('共 ' + r.plan.plan.length + ' 个图元匹配' + emptyNote + '。点击「替换」执行修改。');
+		}));
+
+		/* ---- 替换：直接执行 ---- */
+		btnReplace.addEventListener('click', () => busy(async () => {
+			const r = await freshPlan();
+			if (!r) return;
+			if (!r.plan.plan.length) {
+				listEl.innerHTML = '<span class="dim">没有匹配「' + esc(r.opts.find) + '」的网络名，未做任何修改。</span>';
+				setStatus('0 个匹配，未修改');
+				return;
+			}
+			setStatus('正在执行…');
+			const outcome = await applyPlan(r.plan.plan);
+			const lines = outcome.failures.map(f =>
+				'<div class="fail">✘ [' + esc(KIND[f.kind] || '') + '] ' + esc(f.from) + ' → ' + esc(f.to) + '：' + esc(f.reason) + '</div>');
+			if (outcome.okCount > 0) lines.unshift('<div class="ok">✔ ' + outcome.okCount + ' 个图元改名成功</div>');
+			listEl.innerHTML = lines.join('') || '<span class="dim">未执行任何修改。</span>';
+			setStatus('完成：成功 ' + outcome.okCount + ' 个，失败 ' + outcome.failCount + ' 个。请检查画布后手动保存（Ctrl+S）。', outcome.failCount > 0);
+		}));
+
+		/* ---- 回车触发 ---- */
+		$('find').addEventListener('keydown', (e) => { if (e.key === 'Enter') btnFind.click(); });
+		$('replace').addEventListener('keydown', (e) => { if (e.key === 'Enter') btnReplace.click(); });
+
+		/* ---- 初始扫描提示 ---- */
+		if (ROOT) {
+			collect().then(({ items }) => setStatus('就绪（扫描到 ' + items.length + ' 个网络图元）'))
+				.catch((e) => setStatus('扫描失败：' + (e && e.message ? e.message : e), true));
+		}
+	</script>
+</body>
+</html>

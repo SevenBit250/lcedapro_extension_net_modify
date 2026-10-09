@@ -1,0 +1,59 @@
+{
+	"name": "sch-net-tools",
+	"uuid": "4a2520cbd227438b801cd4b61e56cefc",
+	"displayName": "原理图网络工具箱",
+	"description": "原理图网络标签批量改名等网络辅助工具（当前支持：批量查找替换网络标签名称）",
+	"version": "1.0.0",
+	"publisher": "SevenBit250",
+	"engines": {
+		"eda": "^3.2.0"
+	},
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/SevenBit250/lcedapro_extension_net_modify"
+	},
+	"categories": "Schematic",
+	"keywords": [
+		"NetLabel",
+		"Schematic",
+		"Tools",
+		"BatchRename",
+		"Regex"
+	],
+	"images": {
+		"logo": "./images/logo.png"
+	},
+	"homepage": "https://github.com/SevenBit250/lcedapro_extension_net_modify",
+	"bugs": "https://github.com/SevenBit250/lcedapro_extension_net_modify/issues",
+	"activationEvents": {
+		"onStartupFinished": true
+	},
+	"entry": "./dist/index",
+	"dependentExtensions": {},
+	"headerMenus": {
+		"sch": [
+			{
+				"id": "schNetTools",
+				"title": "网络工具",
+				"menuItems": [
+					{
+						"id": "BatchRenameNetLabels",
+						"title": "批量修改网络标签名称...",
+						"registerFn": "batchRenameNetLabels"
+					},
+					{
+						"id": "ListNetLabels",
+						"title": "列出网络标签",
+						"registerFn": "listNetLabels"
+					},
+					{
+						"id": "About",
+						"title": "关于...",
+						"registerFn": "about"
+					}
+				]
+			}
+		]
+	}
+}
