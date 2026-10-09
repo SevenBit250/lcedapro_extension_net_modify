@@ -1,12 +1,12 @@
 # 原理图网络工具箱（sch-net-tools）
 
-[![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Platform](https://img.shields.io/badge/%E5%98%89%E7%AB%8B%E5%88%9BEDA-%E4%B8%93%E4%B8%9A%E7%89%88-blueviolet)](https://pro.lceda.cn/)
-[![Release](https://img.shields.io/badge/Release-v1.0.0-green)](release/)
+[![Release](https://img.shields.io/badge/Release-v1.0.0-green)](https://github.com/SevenBit250/lcedapro_extension_net_modify/releases)
 
 立创EDA专业版扩展：**原理图网络标签批量改名工具**。单个面板内完成查找预览与批量替换，支持正则表达式与捕获组，覆盖电源/地标志、网络端口（跨图页）与导线网络名。全部改名逻辑已在真实编辑器（V3.2.186）端到端验证。
 
-![面板截图](docs/screenshot-panel.png)
+![面板截图](https://raw.githubusercontent.com/SevenBit250/lcedapro_extension_net_modify/main/docs/screenshot-panel.png)
 
 ## 功能
 
@@ -28,13 +28,13 @@
 
 改名后画布效果（VCC → VCC_TEST，2 个电源标志 + 1 条导线）：
 
-![画布效果](docs/screenshot-canvas.png)
+![画布效果](https://raw.githubusercontent.com/SevenBit250/lcedapro_extension_net_modify/main/docs/screenshot-canvas.png)
 
 ## 安装
 
 ### 方式一：下载安装包
 
-从 [release/](release/) 目录下载 `sch-net-tools_v1.0.0.eext`，然后：
+从 GitHub 仓库 [release/ 目录](https://github.com/SevenBit250/lcedapro_extension_net_modify/tree/main/release)（或 [Releases 页面](https://github.com/SevenBit250/lcedapro_extension_net_modify/releases)）下载 `sch-net-tools_v1.0.0.eext`，然后：
 
 1. 打开嘉立创EDA专业版（V2：设置 → 扩展 → 扩展管理器；V3/V4：高级 → 扩展管理器）
 2. 点击「导入」，选择 `.eext` 文件
@@ -98,4 +98,4 @@ npm run build      # 产物 → build/dist/*.eext
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)
