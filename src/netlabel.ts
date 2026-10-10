@@ -137,6 +137,56 @@ function escapeRegExp(s: string): string {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/* ================= 写入后读回验证（应对旧版本运行时写入不落盘/返回值不可靠） ================= */
+
+const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms));
+
+async function tryModifyAttr(attrId: string, value: string): Promise<void> {
+	try {
+		await eda.sch_PrimitiveAttribute.modify(attrId, { value });
+	}
+	catch { /* 忽略，由读回验证判定成败 */ }
+}
+
+/** 读回元件网络名（net 优先、name 兜底），带重试以容忍画布异步刷新 */
+async function verifyComponentNet(primitiveId: string, expected: string, attempts = 3): Promise<boolean> {
+	for (let i = 0; i < attempts; i++) {
+		try {
+			const comp = await eda.sch_PrimitiveComponent.get(primitiveId);
+			const cur = String(comp?.getState_Net?.() ?? comp?.getState_Name?.() ?? '');
+			if (cur === expected)
+				return true;
+		}
+		catch { /* 继续重试 */ }
+		await sleep(250);
+	}
+	return false;
+}
+
+async function verifyWireNet(primitiveId: string, expected: string, attempts = 3): Promise<boolean> {
+	for (let i = 0; i < attempts; i++) {
+		try {
+			const wire = await eda.sch_PrimitiveWire.get(primitiveId);
+			const cur = String(wire?.getState_Net?.() ?? '');
+			if (cur === expected)
+				return true;
+		}
+		catch { /* 继续重试 */ }
+		await sleep(250);
+	}
+	return false;
+}
+
+async function verifyAttrValue(primitiveId: string, expected: string): Promise<boolean> {
+	try {
+		const attr = await eda.sch_PrimitiveAttribute.get(primitiveId);
+		return String(attr?.getState_Value?.() ?? '') === expected;
+	}
+	catch {
+		return false;
+	}
+}
+
 /** 计算单个名称的新值；无需变更返回 null。plain 模式下替换文本按字面处理（$ 不解释为捕获组） */
 export function computeNewName(name: string, opts: RenameOptions): string | null {
 	let to: string;
@@ -172,33 +222,75 @@ export function buildRenamePlan(items: Array<NetLabelItem>, opts: RenameOptions)
 	return { plan, skippedEmpty };
 }
 
-/** 逐条应用改名计划；单条失败不中断，失败原因随结果返回 */
+/** 逐条应用改名计划；每条写入后读回验证，未生效时自动切换写入路径重试 */
 export async function applyRenamePlan(plan: Array<RenamePlan>): Promise<ApplyOutcome> {
 	const outcome: ApplyOutcome = { okCount: 0, failCount: 0, failures: [] };
 	for (const p of plan) {
+		const tried: Array<string> = [];
+		let ok = false;
 		try {
-			let ok: boolean;
 			if (p.item.kind === 'netlabel') {
-				ok = !!(await eda.sch_PrimitiveAttribute.modify(p.item.primitiveId, { value: p.to }));
+				await tryModifyAttr(p.item.primitiveId, p.to);
+				ok = await verifyAttrValue(p.item.primitiveId, p.to);
+				if (!ok)
+					tried.push('属性value写入未生效');
 			}
 			else if (p.item.kind === 'wire') {
-				ok = !!(await eda.sch_PrimitiveWire.modify(p.item.primitiveId, { net: p.to }));
+				try {
+					await eda.sch_PrimitiveWire.modify(p.item.primitiveId, { net: p.to });
+				}
+				catch {
+					tried.push('wire.modify抛错');
+				}
+				ok = await verifyWireNet(p.item.primitiveId, p.to);
+				if (!ok)
+					tried.push('导线net写入未生效');
 			}
 			else {
-				// netflag/netport：改「Name」子属性，并同步「Global Net Name」
-				if (!p.item.attrId)
-					throw new Error('未找到网络名子属性（Name）');
-				ok = !!(await eda.sch_PrimitiveAttribute.modify(p.item.attrId, { value: p.to }));
-				for (const sid of p.item.syncAttrIds ?? []) {
-					await eda.sch_PrimitiveAttribute.modify(sid, { value: p.to }).catch(() => undefined);
+				// netflag/netport：依次尝试 Name 子属性 → Global Net Name 子属性 → 元件 name 修改
+				// （不同版本运行时生效路径不同，以读回验证为准）
+				if (p.item.attrId) {
+					await tryModifyAttr(p.item.attrId, p.to);
+					ok = await verifyComponentNet(p.item.primitiveId, p.to);
+					if (!ok)
+						tried.push('Name子属性未生效');
+				}
+				else {
+					tried.push('无Name子属性');
+				}
+				if (!ok) {
+					for (const sid of p.item.syncAttrIds ?? []) {
+						await tryModifyAttr(sid, p.to);
+						ok = await verifyComponentNet(p.item.primitiveId, p.to);
+						if (ok)
+							break;
+						tried.push('GlobalNetName子属性未生效');
+					}
+				}
+				if (!ok) {
+					try {
+						await eda.sch_PrimitiveComponent.modify(p.item.primitiveId, { name: p.to });
+						ok = await verifyComponentNet(p.item.primitiveId, p.to);
+						if (!ok)
+							tried.push('component.name未生效');
+					}
+					catch {
+						tried.push('component.name不可用');
+					}
 				}
 			}
 			if (ok) {
 				outcome.okCount++;
+				// 主路径成功后仍尽力同步「Global Net Name」（失败静默，不影响结果）
+				if (p.item.kind === 'netflag' || p.item.kind === 'netport') {
+					for (const sid of p.item.syncAttrIds ?? []) {
+						await tryModifyAttr(sid, p.to);
+					}
+				}
 			}
 			else {
 				outcome.failCount++;
-				outcome.failures.push({ from: p.from, to: p.to, reason: 'modify 返回失败' });
+				outcome.failures.push({ from: p.from, to: p.to, reason: `写入未生效（已尝试：${tried.join('、') || '无'}）` });
 			}
 		}
 		catch (e) {

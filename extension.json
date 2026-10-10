@@ -3,7 +3,7 @@
 	"uuid": "4a2520cbd227438b801cd4b61e56cefc",
 	"displayName": "原理图网络工具箱",
 	"description": "原理图网络标签批量改名等网络辅助工具（当前支持：批量查找替换网络标签名称）",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"publisher": "SevenBit250",
 	"engines": {
 		"eda": "^3.2.0"
