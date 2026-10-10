@@ -12,6 +12,7 @@
  * 安全语义：改名不自动保存工程，执行完由用户检查后手动保存。
  */
 import extensionConfig from '../extension.json' with { type: 'json' };
+import { runDialogFlow } from './dialog-flow';
 import { collectNetLabels } from './netlabel';
 import { info } from './ui';
 
@@ -55,24 +56,34 @@ export async function listNetLabels(): Promise<void> {
 	info(`共 ${items.length} 个网络图元（按网络聚合）：\n\n${lines.join('\n')}${more}${ignored}`, '列出网络标签');
 }
 
-/** 菜单：批量修改网络标签名称（打开可视化面板） */
+/** 菜单：批量修改网络标签名称（优先打开可视化面板，失败时回退对话框模式） */
 export async function batchRenameNetLabels(): Promise<void> {
+	if (await tryOpenPanel())
+		return;
+	await runDialogFlow();
+}
+
+/** 尝试打开可视化面板；旧版本编辑器（如 3.2.84）openIFrame 可能返回失败，此时返回 false 走回退 */
+async function tryOpenPanel(): Promise<boolean> {
 	try {
+		if (!eda.sys_IFrame || typeof eda.sys_IFrame.openIFrame !== 'function')
+			return false;
+		// 老版本可能返回 undefined/false 但窗口实际已打开：以 isIFrameAlreadyExist 复核为准
 		const opened = await eda.sys_IFrame.openIFrame(
 			'/iframe/net-tools.html',
 			480,
 			520,
 			'schNetToolsPanel',
 			{ title: '批量修改网络标签' },
-		);
-		if (!opened)
-			throw new Error('openIFrame 返回失败');
+		).catch(() => undefined);
+		let exists = false;
+		try {
+			exists = !!(await eda.sys_IFrame.isIFrameAlreadyExist('schNetToolsPanel'));
+		}
+		catch { /* 旧版本无此 API 时忽略 */ }
+		return !!(opened || exists);
 	}
-	catch (e) {
-		info(
-			'打开面板失败：' + (e instanceof Error ? e.message : String(e))
-			+ '\n\n如反复出现，请在扩展管理器中检查本扩展的「允许外部交互」权限。',
-			'批量修改网络标签',
-		);
+	catch {
+		return false;
 	}
 }

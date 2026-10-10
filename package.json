@@ -1,7 +1,7 @@
 {
 	"name": "sch-net-tools",
 	"type": "module",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "SchNetTools - 立创EDA专业版 原理图网络标签批量改名工具",
 	"author": "SevenBit250",
 	"license": "Apache-2.0",
